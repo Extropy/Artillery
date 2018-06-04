@@ -1,0 +1,748 @@
+<!--
+  Artillery Calculator
+  Austin Gosling (49Ex)
+  copyright 2016
+  Google shared site address: https://sites.google.com/site/artillerycalculator/
+  214th artillery detachment of the 49th fighter group
+-->
+<html>
+  <head>
+  <title>Artillery Spotter</title>
+
+  <script language="Javascript" src="https://sites.google.com/site/artillerycalculator/home/support/numeric-1.2.6.min.js"></script>
+  <script language="Javascript">
+
+    var img;
+    var w = 0;
+    var h = 0;
+    var diag = 0;
+    var r = 0;
+    var imageAvailable = false;
+    var currentX = 0;
+    var currentY = 0;
+    var dataPoints = [];
+    var x0, y0, x1, y1, x2, y2, b0, b1, b2,e1, e2, r0, r1, r2, bnc=0;
+    var dedr = 0;
+    var ber = 0;
+    var bn = 0;
+    var en = 0;
+    var isBearingCalibrated = false;
+    var isElevationCalibrated = false;
+    var coeff = new Array;
+    var file;
+    var filename = 'none';
+    var filepath = 'none';
+    var epoly,enalt;
+    var dbbasis = 0;
+    var nibasis = 0;
+    var njbasis = 1;
+    var debasis = 0;
+    var niebasis = 0;
+    var njebasis = 1;
+    var epwl = new Array();
+    var enalt = 0;
+    var targetlist=['gng000','gng003','bas000','bas001','bas004','bas006','gng002','gng001','bas002'];
+    var eofr = new Array();
+    var testdata=[[109.2,2.7], [118.8,4.8], [110,4.8], [110.6,4.5], [116,4.1], [112.7,4.2], [109.3,3.9], [108.9,6], [112.8,5.4]];
+    var mapscale = 1;
+    var inhibitMouseMoveUpdate = false;
+
+    function imageHandler() {
+      var c = document.getElementById("mapCanvas");
+      var ctx = c.getContext("2d");
+      //diag = Math.sqrt(Math.pow(w,2) + Math.pow(h,2));
+      w = img.width*mapscale;
+      h = img.height*mapscale;
+      c.width = w;
+      c.height = h;
+      //ctx.save();
+      //ctx.transform(1,0,0,1,diag/2,diag/2);
+      //ctx.drawImage(img, -w/2,-h/2);
+      ctx.drawImage(img,0,0,w,h);
+      //ctx.restore();
+      imageAvailable = true;
+      c.focus();
+    }
+
+    function imageError(e) {
+      alert('unable to load image');
+    }
+
+    function imageLoader(e) {
+      img = new Image();
+      isBearingCalibrated = false;
+      isElevationCalibrated = false;
+      dataPoints = new Array();
+      showDataPoints();
+      document.getElementById('targeting2').style.visibility = 'hidden';
+      img.addEventListener("load",imageHandler,false);
+      img.addEventListener("error",imageError,false);
+      img.src = e.target.result;
+    }
+
+    function loadImage(e) {
+      file = document.getElementById("getimage").files[0];
+      filename = file.name;
+      filepath = file.webkitRelativePath;
+      var fr = new FileReader();
+      fr.onload = imageLoader;
+      fr.readAsDataURL(file);
+    }
+
+    function changeMapScale() {
+      if (confirmScale()) {
+        mapscale = parseFloat(document.getElementById('mapscale').value);
+        var c = document.getElementById("mapCanvas");
+        var ctx = c.getContext("2d");
+        w = img.width*mapscale;
+        h = img.height*mapscale;
+        c.width = w;
+        c.height = h;
+        ctx.drawImage(img,0,0,w,h);
+        isBearingCalibrated = false;
+        isElevationCalibrated = false;
+        dataPoints = new Array();
+        showDataPoints();
+        document.getElementById('targeting2').style.visibility = 'hidden';
+      }
+    }
+
+  function rotate(d) {
+    var c = document.getElementById("mapCanvas");
+    var ctx = c.getContext("2d");
+    ctx.save();
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.transform(1,0,0,1,diag/2,diag/2);
+    r += d;
+    ctx.rotate(r*Math.PI/180);
+    ctx.drawImage(img, -w/2, -h/2);
+    ctx.restore();
+  }
+
+  function r2c(alpha) { // RHS radians to compass degrees
+    var x = 450 - (alpha*180/Math.PI) % 360;
+    while (x > 360) x = x % 360;
+    return x;
+  }
+
+  function c2r(alpha) { // Compass degrees to RHS radians
+    var x = (450 - alpha) % 360;
+    while (x > 360) x = x % 360;
+    return x*Math.PI/180;
+  }
+
+
+  function drawLine(ctx,x1,y1,x2,y2) {
+    //console.log('line ('+x1+','+y1+')-('+x2+','+y2+')');
+    ctx.beginPath();
+    ctx.moveTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    ctx.closePath();
+    ctx.strokeStyle = '#bb111144';
+    ctx.stroke();
+  }
+
+  function drawGrid() {
+    if (dataPoints.length < 2) return;
+    if (!document.getElementById('cbGrid').checked) return;
+    var xw0 = x0 + w;
+    var yw0 = h;
+    var c = document.getElementById("mapCanvas");
+    var ctx = c.getContext("2d");
+
+    // Bearing lines
+    for (b = b0-Math.PI/2; b < (b0 + Math.PI/2); b += 2*Math.PI/180) {
+      var r = r0 + Math.sqrt(Math.pow(w,2)+Math.pow(h,2));
+      x1 = x0; y1 = x0*Math.tan(b);
+      x2 = y0/Math.tan(b); y2 = y0;
+      drawLine(ctx,-x0,h+y0,r*Math.cos(b),h-r*Math.sin(b));
+    }
+
+    // Elevation lines
+    var r1 = r0 - Math.sqrt(Math.pow(w,2)+Math.pow(h,2));
+    var r2 = r0 + Math.sqrt(Math.pow(w,2)+Math.pow(h,2));
+    var dr = (r2 - r1)/20;
+    for (r = r1; r <= r2; r += dr) {
+      ctx.beginPath();
+      ctx.arc(-x0,h+y0,r,0,2*Math.PI);
+      ctx.stroke();
+    }
+  }
+
+  function clearSession() {
+    dataPoints = new Array();
+    imageHandler();
+    showDataPoints();
+  }
+
+  function saveSession() {
+    var scheme = 12;
+    var g = document.getElementById('cbGrid').checked;
+    var l = document.getElementById('cbListCoordinates').checked;
+    localStorage.setItem('session',JSON.stringify(
+      {scheme: scheme, mapfilepath: filepath, mapfilename: filename, mapscale: mapscale, grid: g, listcoordinates: l, dp: dataPoints}
+    ));
+  }
+
+  function restoreSession() {
+    var scheme = 12;
+    var s = JSON.parse(localStorage.getItem('session'));
+    if (s.scheme == scheme) {
+      document.getElementById('mapscale').value = s.mapscale;
+      changeMapScale();
+      dataPoints = s.dp;
+      document.getElementById('cbGrid').checked = s.grid;
+      document.getElementById('cbListCoordinates').checked = s.listcoordinates;
+      isBearingCalibrated = false;
+      isElevationCalibrated = false;
+      calibrate();
+      showDataPoints();
+    } else {
+      alert('session was saved by version '+s.scheme+', not compatible with this version '+scheme);
+    }
+  }
+
+  function getMathematicaData() {
+    var mms = '';
+    if (dataPoints.length < 2) {
+      alert('Calibrate before getting analysis data.');
+      return;
+    }
+    mms += 'x = {'+dataPoints[0].x.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].x.toFixed(2); mms += '};\n';
+    mms += 'y = {'+dataPoints[0].y.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].y.toFixed(2); mms += '};\n';
+    mms += 'r = {'+dataPoints[0].r.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].r.toFixed(2); mms += '};\n';
+    mms += 'b = {'+dataPoints[0].bearing.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].bearing.toFixed(2); mms += '};\n';
+    mms += 'e = {'+dataPoints[0].elevation.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].elevation.toFixed(2); mms += '};\n';
+    mms += 'bc = {'+r2c(dataPoints[0].calculatedbearing).toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+r2c(dataPoints[i].calculatedbearing).toFixed(2); mms += '};\n';
+    mms += 'ec = {'+dataPoints[0].calculatedelevation.toFixed(2); for (i = 1; i < dataPoints.length; i++) mms += ', '+dataPoints[i].calculatedelevation.toFixed(2); mms += '};\n';
+    mms += '{x0,y0,r0c,b0c,r1c,r2c} = {'+x0.toFixed(2)+','+y0.toFixed(2)+', '+r0.toFixed(2)+', '+((450-b0*180/Math.PI) % 360).toFixed(2)+', '+r1.toFixed(2)+', '+r2.toFixed(2)+'};\n';
+    mms += '{w,h} = {'+w+','+h+'};\n';
+    mms += 'basisb = {'+nibasis+','+njbasis+'};\n';
+    mms += 'basise = {'+niebasis+','+njebasis+'};\n';
+    if (epwl.length > 0) mms += 'epwl = {{'+epwl[0].r.toFixed(2)+', '+epwl[0].e.toFixed(2)+'} '; for (i = 1; i < epwl.length; i++) mms += ', {'+epwl[i].r.toFixed(2)+','+epwl[i].e.toFixed(2)+'} '; mms += '};\n\n';
+    alert(mms);
+  }
+
+  function getDataPointsTable() {
+    var ih = '<p class="datapoints"><table cellpadding=5 class="dpTable"><tr><th>#</th>';
+    if (document.getElementById('cbDebug').checked) ih += '<th>x</th><th>y</th><th>r</th>';
+    ih += '<th>Bearing</th><th>Elevation</th>';
+    if (document.getElementById('cbDebug').checked) ih += '<th>B<sub>calc</sub></th><th>E<sub>calc</sub></th>';
+    ih += '</th>';
+    for (i = 0; i < dataPoints.length; i++) {
+      ih += '<tr><td align=center><b>'+(i+1)+'</b></td>';
+      if (document.getElementById('cbDebug').checked) ih += '<td>'+dataPoints[i].x.toFixed(0)+'</td><td>'+dataPoints[i].y.toFixed(0)+'</td><td>'+dataPoints[i].r.toFixed(1)+'</td>';
+      ih += '</td><td align=center>'+dataPoints[i].bearing.toFixed(1)+'</td>'+'<td align=center>'+dataPoints[i].elevation.toFixed(1)+'</td>';
+      if (document.getElementById('cbDebug').checked) {
+        if (i > 1)
+        ih += '<td>'+r2c(dataPoints[i].calculatedbearing).toFixed(1)+'</td><td>'+dataPoints[i].calculatedelevation.toFixed(1)+'</td>';
+        else
+        ih += '<td>-</td><td>-</td>';
+      }
+      if (i == nibasis) ih += '<td>B<sub>cal1</sub></td>';
+      if (i == njbasis) ih += '<td>B<sub>cal2</sub></td>';
+      ih += '</tr>';
+    }
+    ih += "</table></p>"
+    return ih;
+  }
+
+  function listCoordinates() {
+    var lc = document.getElementById('listCoordinates');
+    if (document.getElementById('cbListCoordinates').checked) {
+      lc.display = 'inline';
+      lc.innerHTML = getDataPointsTable();
+    } else {
+      lc.innerHTML = '';
+      lc.display = 'none';
+    }
+  }
+
+  function showDataPoints() {
+
+    var bc, be;
+
+    if (dataPoints.length > 0) {
+      imageHandler();
+      drawGrid();
+      listCoordinates();
+      var c = document.getElementById('mapCanvas');
+      var ctx = c.getContext("2d");
+      for (i = 0; i < dataPoints.length; i++) {
+        var maptext = (i+1);
+        ctx.font = '18px Arial';
+        var xoff = ctx.measureText(maptext).width/2;
+        var yoff = 9;
+        ctx.fillText(maptext,dataPoints[i].x-xoff,dataPoints[i].y+yoff);
+      }
+    }
+  }
+
+  function cancelRecording() {
+    document.getElementById('enterBearingAndElevation').style.display = 'none';
+    inhibitMouseMoveUpdate = false;
+    document.getElementById('mapCanvas').focus();
+  }
+
+  function imgClicked(c, mousePos) {
+    //alert('image clicked at '+mousePos.x+','+mousePos.y);
+    currentX = mousePos.x;
+    currentY = mousePos.y;
+    inhibitMouseMoveUpdate = true;
+    if (isBearingCalibrated) document.getElementById('bearing').value = bnc.toFixed(2);
+    if (isElevationCalibrated) document.getElementById('elevation').value = en.toFixed(2);
+
+
+    if (document.getElementById('cbUseTestData').checked) {
+      if (dataPoints.length < testdata.length) {
+        document.getElementById('bearing').value = testdata[dataPoints.length][0]
+        document.getElementById('elevation').value = testdata[dataPoints.length][1];
+      }
+    }
+
+    document.getElementById('enterBearingAndElevation').style.display = 'inline';
+    document.getElementById('enterBearingAndElevation').style.position = 'absolute';
+    document.getElementById('enterBearingAndElevation').style.top = currentY+10;
+    document.getElementById('enterBearingAndElevation').style.left = currentX+20;
+
+    document.getElementById("bearing").focus();
+  }
+
+  function confirmRotate() {
+    var resp = true;
+    if (isBearingCalibrated) {
+      resp = confirm('If you rotate the image now, you will lose existing datapoints and need to recalibrate');
+    }
+    return resp;
+  }
+
+  function confirmScale() {
+    var resp = true;
+    if (isBearingCalibrated) {
+      resp = confirm('If you scale the image now, you will lose existing datapoints and need to recalibrate');
+    }
+    return resp;
+  }
+
+  function canvasArrowKeys(event) {
+    if(event.keyCode == 37) {if (confirmRotate()) rotate(-1);}
+    else if(event.keyCode == 39) {if (confirmRotate()) rotate(1);}
+    else if(event.keyCode == 38) {if (confirmRotate()) {r = 0; rotate(0);}}
+  }
+
+  function recordBearingAndElevation(evt) {
+
+    var b = parseFloat(document.getElementById('bearing').value);
+    var e = parseFloat(document.getElementById('elevation').value);
+
+    if (dataPoints.length < 2)
+      dataPoints.push({x:currentX, y:currentY, bearing:b, elevation:e, calculatedbearing: 0, calculatedelevation: 0, r: 0});
+    else {
+      dataPoints.push({x:currentX, y:currentY, bearing:b, elevation:e, calculatedbearing: bn, calculatedelevation: en,
+      r: Math.sqrt(Math.pow(currentX+x0,2)+Math.pow(h-currentY+y0,2))});
+    }
+
+    calibrate();
+    showDataPoints();
+    document.getElementById('enterBearingAndElevation').style.display = 'none';
+    document.getElementById('mapCanvas').focus();
+    inhibitMouseMoveUpdate = false;
+    return false;
+  }
+
+  function NewtonRaphson(f, x, c, iterations, tolerance, jacobian) {
+    // Solve for zeroes of the array of functions in f, starting at initial guess in array x
+    // within tolerance, max iterations. jacobian calculated numerically if not supplied
+    // Object c contains function constants
+
+    // Numerical Jacobian in case no Jacobian is supplied
+    function Jacobianq(f,x,c) {
+      // Make Jacobian for array of functions x at the point in array x, with function constants c
+      var temp;
+
+      var h = 1.0e-4;
+      var jac = new Array();
+      for (i=0; i < x.length; i++) jac[i] = new Array();
+      var f0 = new Array();
+      var f1 = new Array();
+      for (i=0; i < x.length; i++) f0[i] = f[i](x,c);
+      for (i=0; i < x.length; i++) {
+        temp = x[i]; x[i] = temp + h;
+        for (j=0; j < f.length; j++) f1[j] = f[j](x,c);
+        x[i] = temp;
+        for (j=0; j < f.length; j++) jac[j][i] = (f1[j] - f0[j])/h;
+      }
+      return {jacobian:jac, fvals: f0}
+    }
+
+    var jf; // get Jacobian object {jac,fvals}
+    var dx = new Array();
+    var maxx;
+    var i,j;
+
+    for (i=0; i < iterations; i++) {
+      //console.log(i+': '+numeric.prettyPrint({x: x, dx: dx})+'\n');
+      if (jacobian != null) jf = jacobian(f,x,c);
+      else jf = Jacobianq(f,x,c);
+      //console.log('jacobian: '+numeric.prettyPrint(jf.jacobian));
+      //console.log('jacobian^-1: '+numeric.prettyPrint(numeric.inv(jf.jacobian)));
+      var solved = true;
+      for (j = 0; j < jf.fvals.length; j++) {
+        if (isNaN(jf.fvals[j])) return {status: 'error NaN in function evaluation', iterations: i, fvals: jf.fvals, x: x};
+        if (Math.abs(jf.fvals[j]) > tolerance) solved = false;
+      }
+      //if (numeric.dot(jf.fvals,jf.fvals) < tolerance) {
+      if (solved) {
+        return {status: 'solved', solution: x, iterations: i, fvals: jf.fvals};
+      }
+      // xn+1 = xn - J^-1(xn) * f(xn)
+      var fvals = jf.fvals; for (j=0; j < fvals.length; j++) fvals[j] = -fvals[j];
+      dx = numeric.dot(numeric.inv(jf.jacobian),fvals);
+      for (j=0; j < x.length; j++) x[j] = x[j] + dx[j];
+      /*
+      maxx = Math.abs(x[0]); for (j=1; j < j.length; j++) if (Math.abs(x[j]) > maxx) maxx = Math.abs(x[j]);
+      if (numeric.dot(dx,dx) < tolerance*Math.max(maxx,1.0)) {
+        return {status: 'solved 2', solution: x, jacobian: jf.jacobian, dx: dx, iterations: i};
+      }
+      */
+    }
+    return {status: 'iterations exceeded', solution: x, iterations: i};
+  }
+
+  function calibrate() {
+
+    var nr = new Array();
+
+    if (dataPoints.length < 2) return; // can't do anything with one data point
+
+    x1 = dataPoints[nibasis].x;
+    y1 = h - dataPoints[nibasis].y;
+    b1 = ((450 - dataPoints[nibasis].bearing) % 360)*Math.PI/180;
+
+    x2 = dataPoints[njbasis].x;
+    y2 = h - dataPoints[njbasis].y;
+    b2 = ((450 - dataPoints[njbasis].bearing) % 360)*Math.PI/180;
+
+    if (!isBearingCalibrated) {
+      // Solve these functions for r0, b0, r1, r2
+      nr = NewtonRaphson([
+        function(x,c) {return x[2]*Math.cos(c.b1)-x[0]*Math.cos(x[1])-c.x1;},
+        function(x,c) {return x[2]*Math.sin(c.b1)-x[0]*Math.sin(x[1])-c.y1;},
+        function(x,c) {return x[3]*Math.cos(c.b2)-x[0]*Math.cos(x[1])-c.x2;},
+        function(x,c) {return x[3]*Math.sin(c.b2)-x[0]*Math.sin(x[1])-c.y2;}
+      ],[1000,b1,1000,1000],{b1: b1, b2: b2, x1: x1, y1: y1, x2: x2, y2: y2},50,1e-9);
+      if (nr.status.indexOf('solved') >= 0) {
+        r0 = nr.solution[0]; b0 = nr.solution[1]; r1 = nr.solution[2]; r2 = nr.solution[3];
+        x0 = r0*Math.cos(b0); y0 = r0*Math.sin(b0);
+        // Recalculate r for each dataPoint
+        for (i = 0; i < dataPoints.length; i++) {
+          dataPoints[i].r = Math.sqrt(Math.pow(x0 + dataPoints[i].x,2)+Math.pow(y0 + h - dataPoints[i].y,2));
+        }
+        isBearingCalibrated = true;
+      } else {
+        isBearingCalibrated = false;
+      }
+    }
+
+    if (dataPoints.length == 2) {
+      dataPoints[0].r = Math.sqrt(Math.pow(dataPoints[0].x+x0,2)+Math.pow(h-dataPoints[0].y+y0,2));
+      dataPoints[1].r = Math.sqrt(Math.pow(dataPoints[1].x+x0,2)+Math.pow(h-dataPoints[1].y+y0,2));
+    }
+    epwl = new Array();
+    for (i = 0; i < dataPoints.length; i++) epwl.push({r: dataPoints[i].r, e: dataPoints[i].elevation});
+    epwl.sort(function(a,b) {return a.r - b.r;});
+    isElevationCalibrated = true;
+  }
+
+  function calculateShot(mousePos) {
+    var fitfound = false;
+    var xn = mousePos.x;
+    var yn = h - mousePos.y;
+    //var r = Math.sqrt(Math.pow(x0-xn,2) + Math.pow(y0-yn,2));
+    rn = Math.sqrt(Math.pow(xn+x0,2)+Math.pow(yn+y0,2));
+
+    if (isBearingCalibrated) {
+      // .. calculate bn: rn Cos[bn] = r0 Cos[b0] + xn, rn^2 = (xn+x0)^2 + (yn+y0)^2
+      // bn = ArcCos[(r0 Cos[b0]+xn)/rn]
+      //bn = -Math.acos((r0*Math.cos(b0)+xn)/rn);
+      bn = Math.atan2(r0*Math.sin(b0)+yn,r0*Math.cos(b0)+xn);
+      bnc = ((450-bn*180/Math.PI) % 360);
+    }
+      if (rn < epwl[0].r) { // rn is smallest so far
+        en = epwl[0].e - (epwl[epwl.length-1].e-epwl[0].e)*(epwl[0].r - rn)/(epwl[epwl.length-1].r-epwl[0].r);
+        fitfound = true;
+      } else {
+        for (i = 0; i < epwl.length-1; i++) {
+          //console.log('rn = '+rn+', epwl['+i+'].r = '+epwl[i].r+', epwl['+(i+1)+'].r = '+epwl[i+1].r);
+          if ((rn >= epwl[i].r) && (rn < epwl[i+1].r)) {
+            // this is the right interval
+            //console.log('found '+i);
+            en = epwl[i].e + (epwl[i+1].e-epwl[i].e)*(rn - epwl[i].r)/(epwl[i+1].r-epwl[i].r);
+            fitfound = true;
+          }
+        }
+        // this is the largest rn so far
+        if (!fitfound) {
+          //console.log('largest rn');
+          en = epwl[epwl.length-1].e + (epwl[epwl.length-1].e-epwl[0].e)*(rn-epwl[epwl.length-1].r)/(epwl[epwl.length-1].r-epwl[0].r);
+        }
+      }
+    }
+
+  function getMousePos(canvas, evt) {
+    var rect = canvas.getBoundingClientRect();
+    return {
+      x: evt.clientX - rect.left,
+      y: evt.clientY - rect.top
+    }
+  }
+
+  function imgMouseMoved(c,mousePos) {
+    if (inhibitMouseMoveUpdate) return;
+    if (isBearingCalibrated) {
+      calculateShot(mousePos);
+      if (isElevationCalibrated) {
+        var ov = document.getElementById('targeting2');
+        ov.style.left = (mousePos.x+15)+'px';
+        ov.style.top = (mousePos.y+10)+'px';
+        ov.style.visibility = 'visible';
+        ov.innerHTML = '<p class="targetingoverlay">'+bnc.toFixed(2)+', '+en.toFixed(2)+'</p>';
+      }
+    }
+  }
+
+  function toggleDebug() {
+  }
+
+  window.onload=function() {
+    document.getElementById("getimage").addEventListener('change', loadImage, false);
+    //document.getElementById('bearingAndElevation').addEventListener('submit',recordBearingAndElevation,false);
+
+    var canvas = document.getElementById('mapCanvas');
+    //canvas.addEventListener('keydown',canvasArrowKeys,false);
+    canvas.addEventListener('click', function(evt) {
+                            var mousePos = getMousePos(canvas, evt);
+                            imgClicked(canvas, mousePos);
+                            }, false);
+    canvas.addEventListener('mousemove', function(evt) {
+                            var mousePos = getMousePos(canvas, evt);
+                            imgMouseMoved(canvas, mousePos);
+                            }, false);
+
+    img = new Image();
+    img.addEventListener("load",imageHandler,false);
+    img.addEventListener("error",imageError,false);
+  }
+    </script>
+    <style type="text/css">
+
+      h1 {font-size: 18}
+      body {font-family: Arial}
+      li {margin-bottom: 2mm; list-style-type: none}
+      .indent {padding-left:5px;}
+      .heading {font-size: 14pt; font-weight: bold;}
+      .subheading {font-size: 12pt; font-weight: bold;}
+      .ffe {padding-left: 5px;}
+      .calibrated {color: red; text-align: center; font-size: 20; font-weight: bold; padding-left: 5px;}
+      .targetingoverlay {font-size: 12pt; font-family: "Courier New", monospace; font-weight: bold;}
+      .targetprompt {font-size: 12pt; font-style: italic; padding-left: 5px;}
+      .datapoints {font-size: 12pt; padding-left: 10px;}
+      .calibration {font-size: 12pt; padding-left: 10px; text-align: left;}
+      table.arrowtable {border: 1px solid #006400; text-align: center;}
+      table.arrowtable td {padding-left: 6px; padding-right: 6px}
+      table.arrowtable th {padding: 0px;}
+      table.dpTable {border: 1px solid grey; text-align: center; border-collapse: collapse;}
+      table.dpTable td, th {padding: 3px; border: 1px solid grey}
+
+      canvas:focus {outline: none;}
+      #background {background-image: url(ArtilleryMapBackground.jpg); background-size: contain;
+                   opacity: 0.2; z-index: -1; position: fixed; top:0px; width: 2000px; height: 1407px;}
+      #mainmenu {margin-top:6px; z-index: 2; position:fixed;}
+      #mainmenu ul {list-style:none; position:relative; float:left; margin:0; padding:0}
+      #mainmenu ul a {display:block; text-decoration:none; font-family: monospace; font-size: 14pt; color: #41533b; padding: 6px 12px;}
+      #mainmenu ul a:hover {color: #9e9a75;}
+      #mainmenu ul p {display:block; text-decoration:none; font-family: monospace; font-size: 14pt; color: black; padding: 6px 12px;
+                      margin-top: 0; margin-bottom: 0;}
+      #mainmenu ul p:hover {color: #9e9a75;}
+      #mainmenu ul li {position:relative; float:left;	margin:0;	padding:0; z-index: 2;}
+      #mainmenu ul li:hover {background: #41533b;}
+      #mainmenu ul li div p:hover {background: #9e9a75; color: #1c222e;} /* special case so text is not highlighted */
+      #mainmenu ul ul {display:none; position:absolute; top:100%; left:0; background: black; padding:0}
+      #mainmenu ul ul li {float:none; width:300px}
+      #mainmenu ul ul a {line-height:110%; padding:10px 15px}
+      #mainmenu ul ul ul {top:0; left:100%}
+      #mainmenu ul li:hover > ul {display:block; background: #9e9a75; }
+
+      #mainmenu .apptitle {background: #41533b; color: #9e9a75; font-weight: bolder}
+      #mainmenu .helptext {font-family: monospace; font-size: 12pt; color: #1c222e; line-height: normal;}
+      #helptext {width: 400px;}
+
+      #enterBearingAndElevation {background-color: #9e9a75; position: absolute; z-index: 10; padding-left: 6px; padding-top: 12px; padding-bottom: 0px;
+                                 font-family: monospace; font-size: 10pt;}
+
+      #debug {white-space: pre;}
+      #container{}
+      #left{float:left;}
+      #right{float: left; width: 500px; padding-left: 20px;}
+      #container {z-index: 0; position:absolute; top: 60px;}
+      #targeting2 {
+           visibility: hidden;
+           position: absolute;
+           left: 100px;
+           top: 500px;
+           width:25%;
+           height:20%;
+           text-align: left;
+           font-size: 10pt;
+           z-index: 1000;
+      }
+    </style>
+
+  </head>
+
+  <body>
+    <nav id="mainmenu">
+      <ul>
+        <li><p class="apptitle">Artillery Calculator</p></li>
+        <li><a href="#">Maps</a>
+          <ul>
+            <li><p><input type="file" id="getimage"></p></li>
+            <li><p id="scaleentry">Scale: <input id="mapscale" size="5" value="1.0" onChange="changeMapScale(); return false;"></p></li>
+<!--
+            <li><a href="#">Load from server ...</a>
+              <ul>
+                <li><a href="#">Airfield</a>
+                  <ul>
+                    <li><a href="#">Large</a></li>
+                    <li><a href="#">Small</a></li>
+                  </ul>
+                </li>
+                <li><a href="#">Vehicle base</a>
+                  <ul>
+                    <li><a href="#">Large</a></li>
+                    <li><a href="#">Small</a></li>
+                  </ul>
+                </li>
+                <li><a href="#">Port</a></li>
+                <li><a href="#">Town</a></li>
+              </ul>
+            </li>
+          -->
+          </ul>
+        </li>
+        <li><a href="#">Session</a>
+          <ul>
+            <li><a href="#" onClick="saveSession();">Save</a></li>
+            <li><a href="#" onClick="restoreSession();">Restore</a></li>
+            <li><a href="#" onClick="clearSession();">Clear</a></li>
+          </ul>
+        </li>
+        <li><a href="#">Options</a>
+          <ul>
+            <li><p><input type="checkbox" id="cbGrid" checked="true"; onclick="showDataPoints();">Gridlines</p></li>
+            <li><p><input type="checkbox" id="cbListCoordinates" onClick="listCoordinates();"> List Coordinates</p></li>
+            <li><p><input type="checkbox" id="cbUseTestData" onClick=""> Use test data</p></li>
+            <li><p><input type="checkbox" id="cbDebug" onClick=""> Debug</p></li>
+            <li><a href="#" onClick="getMathematicaData();">Get analysis data</a></li>
+          </ul>
+        </li>
+        <li><p>Help</p>
+          <ul><div id="helptext">
+            <p class="helptext">Version 1.1</p>
+            <p class="helptext">Have a spotter help you hit two targets, spaced as far apart as possible in bearing and elevation.</p>
+            <p class="helptext"><i>Hint: Use base guns as initial targets, they only need one hit.</i></p>
+            <p class="helptext">Enter the (bearing, elevation) required to hit each target.</p>
+            <p class="helptext"><i>Note: don't ever enter (bearing, elevation) unless you actually hit the target. It is useful to put
+              the numbers in the form to keep track, but don't hit enter until they actually hit.</i></p>
+              <p class="helptext">After these two calibration shots, you will see the (bearing, elevation) needed to hit other targets</p>
+              <p class="helptext">Scaling the map resets calibration and you will have to start over.</p>
+              <p class="helptext">Print the list of good hits for later reference. if you go back to the same position, they will still work.
+                It doesn't matter which orientation you park in as long as you can align on the target. It <b>does</b> matter
+                that you  park in the same position as closely as possible (about 1/2 vehicle length should do).
+              </p>
+            </div></ul>
+          </li>
+        </ul>
+      </nav>
+
+      <div id="enterBearingAndElevation" style="display:none;">
+        <form action="" onSubmit="return false;" id='bearingAndElevation'>
+          Bearing: <input type="text" id="bearing" size=7>
+          Elevation: <input type="text" id="elevation" size=7>
+          <input type="submit" value="Add" onClick="recordBearingAndElevation(); return false;">
+          <input type="submit" value="cancel" onClick="cancelRecording(); return false;">
+        </form>
+      </div>
+
+      <div id="container">
+        <div id="targeting2" class="overlay">targeting2</div>
+        <div id="mapdiv">
+          <canvas id="mapCanvas" width="400" height="400" tabindex="1.0"></canvas>
+        </div>
+        <div id="listCoordinates"></div>
+      </div>
+      <div id="background"></div>
+  </body>
+  <!--
+  Version history
+
+  b1
+    First release
+
+  b2
+    Fixed issue with processing continuing before image was finished loading
+
+  b3
+    Removed debug alert on entering imageHanlder
+
+  b4
+    Handle problem of p1 being right of and closer or left of and further away than p2 - fixed by swapping if possible, rejecting otherwise
+    Added debug switch
+
+  b5
+    No longer requires caliration points to have any specific orientation with respect to each other and the shooter
+    Added Mathematica variables to debug output
+
+  b6
+    Added x,y in data points table when debug is selected
+    Calculate with respect to r1 and r2 and choose closest reference to target point
+    Changed calibration quality to be the ratio of dist(p1,p2)/diagonal of image
+
+  b7
+    Stopped bad v2g delta from invalidating calibration
+    Lowered precision to 2 decimals, one ring in target at 1200 is difference in bearing or elevation of 0.15
+
+  b8
+    Major change to bearing calculation. Map rotation no longer required. Maps must have North pointing up, but the
+    system will then calculate the shooter's location using numerical solution of non-linear equations.
+    Added ability to scale the map.
+    Added floating bearing, elevation indicator that follows the mouse.
+    Elevation calculation is de/dr from elevation ref points
+
+  b9
+    Fixed error in targeting after map scaling
+    Inhibit mouse move targeting text change after click
+    Change to piecewise linear model for elevation
+    Recalibrate bearing when better basis is available
+
+  b10
+    Draw bearing, elevation grid on map
+
+  b11
+    Change dataPoint id numbers drawn on map to coordinates
+    Save/restore coordinates table to/from local storage
+
+  V1
+    Look and feel WWII theme
+    Use menus instead of forms
+    Removed bearing recalibration
+
+  V1.1
+    Fixed bearing calculation (sector aware atan2)
+    Session now restores map scale and recalibrates.
+
+  todo
+    Silent calibration using bearing only
+
+  -->
+</html>
